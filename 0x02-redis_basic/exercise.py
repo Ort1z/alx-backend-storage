@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+
 import redis
 import uuid
+from typing import Union, Callable, Optional
 from functools import wraps
 
 class Cache:
@@ -34,49 +36,47 @@ class Cache:
         """Retrieve an integer from Redis."""
         return self.get(key, fn=int)
 
-def count_calls(method):
-    """Decorator to count calls to a method."""
-    key = method.__qualname__
-
+def count_calls(method: Callable) -> Callable:
+    ''' def count calls '''
     @wraps(method)
-    def wrapper(self, *args, **kwargs):
-        """Wrap the method and increment the call count."""
-        self._redis.incr(key)
-        return method(self, *args, **kwargs)
-
+    def wrapper(self, *args, **kwds):
+        ''' def wrapper '''
+        key_name = method.__qualname__
+        self._redis.incr(key_name, 0) + 1
+        return method(self, *args, **kwds)
     return wrapper
 
-# Decorate the store method
-Cache.store = count_calls(Cache.store)
-
-def call_history(method):
-    """Decorator to store input/output history of a method."""
-    input_key = f"{method.__qualname__}:inputs"
-    output_key = f"{method.__qualname__}:outputs"
-
+def call_history(method: Callable) -> Callable:
+    ''' def call history '''
     @wraps(method)
-    def wrapper(self, *args, **kwargs):
-        """Wrap the method to log inputs and outputs."""
-        # Store input as string
-        self._redis.rpush(input_key, str(args))
-        # Call the original method
-        output = method(self, *args, **kwargs)
-        # Store output
-        self._redis.rpush(output_key, output)
-        return output
-
+    def wrapper(self, *args, **kwds):
+        ''' def wrapper'''
+        key_m = method.__qualname__
+        inp_m = key_m + ':inputs'
+        outp_m = key_m + ":outputs"
+        data = str(args)
+        self._redis.rpush(inp_m, data)
+        fin = method(self, *args, **kwds)
+        self._redis.rpush(outp_m, str(fin))
+        return fin
     return wrapper
 
-# Apply the call_history decorator
-Cache.store = call_history(Cache.store)
-
-def replay(method):
-    """Display the call history for a method."""
-    inputs = method.__self__._redis.lrange(f"{method.__qualname__}:inputs", 0, -1)
-    outputs = method.__self__._redis.lrange(f"{method.__qualname__}:outputs", 0, -1)
-
-    count = len(inputs)
-    print(f"{method.__qualname__} was called {count} times:")
-    
-    for inp, out in zip(inputs, outputs):
-        print(f"{method.__qualname__}(*{inp.decode()}) -> {out.decode()}")
+def replay(func: Callable):
+    '''def replay'''
+    r = redis.Redis()
+    key_m = func.__qualname__
+    inp_m = r.lrange("{}:inputs".format(key_m), 0, -1)
+    outp_m = r.lrange("{}:outputs".format(key_m), 0, -1)
+    calls_number = len(inp_m)
+    times_str = 'times'
+    if calls_number == 1:
+        times_str = 'time'
+    fin = '{} was called {} {}:'.format(key_m, calls_number, times_str)
+    print(fin)
+    for k, v in zip(inp_m, outp_m):
+        fin = '{}(*{}) -> {}'.format(
+            key_m,
+            k.decode('utf-8'),
+            v.decode('utf-8')
+        )
+        print(fin)
